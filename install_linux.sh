@@ -64,18 +64,26 @@ playwright install --with-deps chromium
 # Create data directories
 mkdir -p data/hibernate data/screenshots data/sessions
 
-# Make helper launcher executable
-chmod +x run_mcp_stdio.sh 2>/dev/null || true
+# Make helper scripts executable
+chmod +x run_mcp_stdio.sh launch_human.sh create_desktop_shortcut.sh 2>/dev/null || true
 chmod +x run_mcp_http.sh 2>/dev/null || true
+
+# Create desktop shortcut with logo for Human mode
+echo "[*] Creating Desktop shortcut and Application Menu entry with Agentica logo..."
+./create_desktop_shortcut.sh 2>/dev/null || true
 
 echo ""
 echo "================================================================="
 echo "   [SUCCESS] Agentica is installed and ready on your system!     "
 echo "================================================================="
 echo ""
-echo "To run standard MCP over stdio for local agents (Hermes):"
-echo "  ./run_mcp_stdio.sh"
+echo "👤 For Humans (Regular Desktop Browser with Co-Browsing on port 9222):"
+echo "   - Click the 'Agentica' icon on your Desktop or in your App Menu"
+echo "   - Or run: ./launch_human.sh"
 echo ""
-echo "To run MCP HTTP / SSE server:"
-echo "  ./run_mcp_http.sh"
+echo "🤖 For AI Agents (Hermes via MCP stdio):"
+echo "   - Set command to: $PWD/run_mcp_stdio.sh"
+echo ""
+echo "🌐 For Remote MCP (HTTP / SSE server):"
+echo "   - Run: ./run_mcp_http.sh"
 echo ""

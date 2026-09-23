@@ -1,0 +1,13 @@
+httpx
+trafilatura
+markdownify
+playwright
+beautifulsoup4
+psutil
+pillow
+chardet
+feedparser
+lxml
+fastapi
+uvicorn
+

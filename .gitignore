@@ -1,0 +1,28 @@
+# Python Cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Virtual Environments
+venv/
+env/
+.env
+
+# Heavy Binaries & Setup Outputs
+bin/
+Output/
+*.exe
+
+# Local User Data (Profiles, History, Cache, Logs)
+data/
+harvest_*.md
+agent_vision_test.png
+*.log
+*.csv
+bys_*.json
+
+# OS generated files
+Thumbs.db
+.DS_Store
+

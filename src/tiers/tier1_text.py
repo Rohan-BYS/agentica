@@ -8,15 +8,17 @@ from src.core.secret_manager import SecretManager
 from src.core.visual_sentinel import VisualSentinel
 from src.core.auto_escalation import AutoEscalation
 
+UNIFIED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
 class Tier1TextEngine:
     def __init__(self, secret_manager: SecretManager = None):
-        self.client = httpx.AsyncClient(timeout=15.0)
+        self.client = httpx.AsyncClient(timeout=15.0, headers={"User-Agent": UNIFIED_USER_AGENT})
         self.secret_manager = secret_manager or SecretManager()
         self.visual_sentinel = VisualSentinel()
 
     def _get_headers(self) -> dict:
         return {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": UNIFIED_USER_AGENT
         }
 
     async def fetch(self, url: str) -> str:

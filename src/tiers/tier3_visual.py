@@ -7,6 +7,8 @@ from typing import Dict, Any, Optional
 from PIL import Image, ImageDraw, ImageFont
 from playwright.async_api import async_playwright
 
+UNIFIED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
+
 class Tier3VisualEngine:
     def __init__(self, memory_manager=None):
         self.memory_manager = memory_manager
@@ -19,18 +21,24 @@ class Tier3VisualEngine:
         if not self.browser:
             self.browser = await self.playwright.chromium.launch(headless=headless)
 
-    async def _get_page(self, url: str, headless: bool = True):
+    async def _get_page(self, url: str, headless: bool = True, cookies: Optional[list] = None):
         await self._init_browser(headless=headless)
         context = await self.browser.new_context(
             viewport={"width": 1280, "height": 800},
-            device_scale_factor=1
+            device_scale_factor=1,
+            user_agent=UNIFIED_USER_AGENT
         )
+        if cookies:
+            try:
+                await context.add_cookies(cookies)
+            except Exception:
+                pass
         page = await context.new_page()
         await page.goto(url, wait_until="networkidle")
         return context, page
 
-    async def capture_screenshot(self, url: str, headless: bool = True) -> dict:
-        context, page = await self._get_page(url, headless)
+    async def capture_screenshot(self, url: str, headless: bool = True, cookies: Optional[list] = None) -> dict:
+        context, page = await self._get_page(url, headless, cookies=cookies)
         try:
             import os
             import time

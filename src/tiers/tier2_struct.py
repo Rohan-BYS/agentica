@@ -21,6 +21,7 @@ from playwright.async_api import async_playwright, Page, BrowserContext, CDPSess
 
 
 # --- Constants ---
+UNIFIED_USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36"
 ANTI_DETECTION_ARGS = [
     "--disable-blink-features=AutomationControlled",
     "--disable-infobars",
@@ -96,7 +97,7 @@ class Tier2StructEngine:
         """Ensure a page and CDP session are ready."""
         await self.init_browser(headless=headless)
         if self.context is None:
-            self.context = await self.browser.new_context()
+            self.context = await self.browser.new_context(user_agent=UNIFIED_USER_AGENT)
         if self.page is None:
             self.page = await self.context.new_page()
             # Block heavy resources
@@ -420,6 +421,31 @@ class Tier2StructEngine:
             return f"Error: Could not resolve reference {ref}"
 
         try:
+            # Check if element is an editable input or textarea or contenteditable
+            node_res = await self.cdp.send("DOM.resolveNode", {"backendNodeId": entry.backend_node_id})
+            object_id = node_res.get("object", {}).get("objectId")
+            if object_id:
+                check_res = await self.cdp.send("Runtime.callFunctionOn", {
+                    "objectId": object_id,
+                    "functionDeclaration": """function() {
+                        return this.isContentEditable || 
+                               this instanceof HTMLInputElement || 
+                               this instanceof HTMLTextAreaElement || 
+                               this.getAttribute('role') === 'textbox' ||
+                               this.getAttribute('role') === 'searchbox';
+                    }""",
+                    "returnByValue": True
+                })
+                is_editable = check_res.get("result", {}).get("value", False)
+                if not is_editable:
+                    fillables = [
+                        f"{r} ({e.role}: '{e.name[:20]}')"
+                        for r, e in self.ref_map.items()
+                        if e.role in ("textbox", "searchbox", "combobox")
+                    ]
+                    hint = f" Available editable inputs: {', '.join(fillables[:5])}" if fillables else " No editable text inputs found on page."
+                    return f"Cannot fill {ref}: element is a <{entry.role}> ('{entry.name}'), which is not an editable text field.{hint}"
+
             # Focus the element
             await self.cdp.send("DOM.focus", {"backendNodeId": entry.backend_node_id})
 

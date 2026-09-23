@@ -224,7 +224,13 @@ class AIBrowserRouter:
     async def screenshot(self, url: Optional[str] = None, headless: bool = True) -> Dict:
         """Take a screenshot."""
         if url:
-            return await self.tier3.capture_screenshot(url, headless=headless)
+            cookies = None
+            if self.tier2.context:
+                try:
+                    cookies = await self.tier2.context.cookies()
+                except Exception:
+                    pass
+            return await self.tier3.capture_screenshot(url, headless=headless, cookies=cookies)
         return {"error": "URL required for screenshot"}
 
     async def screenshot_element(self, url: str, selector: str, headless: bool = True) -> Dict:

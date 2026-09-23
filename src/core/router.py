@@ -60,6 +60,22 @@ class AIBrowserRouter:
         """
         await self.memory.wait_for_memory()
 
+        # Synchronize cookies from Tier 2 into Tier 1 so authenticated sessions persist across browse()
+        if self.tier2.context:
+            try:
+                cookies = await self.tier2.context.cookies()
+                for c in cookies:
+                    domain = c.get("domain", "").lstrip(".")
+                    if domain:
+                        self.tier1.client.cookies.set(
+                            c["name"],
+                            c["value"],
+                            domain=domain,
+                            path=c.get("path", "/")
+                        )
+            except Exception:
+                pass
+
         if mode == "text" or mode == "auto":
             result = await self.tier1.fetch(url)
 

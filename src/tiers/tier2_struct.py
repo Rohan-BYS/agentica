@@ -443,21 +443,21 @@ class Tier2StructEngine:
                 }""",
             })
 
-            # Type each character with triplet key events
-            for char in text:
-                await self.cdp.send("Input.dispatchKeyEvent", {
-                    "type": "keyDown", "key": char, "text": char,
-                })
-                await self.cdp.send("Input.dispatchKeyEvent", {
-                    "type": "char", "text": char,
-                })
-                await self.cdp.send("Input.dispatchKeyEvent", {
-                    "type": "keyUp", "key": char,
-                })
+            # Type text using CDP Input.insertText (prevents character doubling and handles unicode)
+            await self.cdp.send("Input.insertText", {"text": text})
 
             return f"Filled {ref} with '{text}'"
         except Exception as e:
-            return f"Error filling {ref}: {str(e)}"
+            err_msg = str(e)
+            if "not focusable" in err_msg.lower():
+                fillables = [
+                    f"{r} ({e.role}: '{e.name[:20]}')"
+                    for r, e in self.ref_map.items()
+                    if e.role in ("textbox", "searchbox", "combobox")
+                ]
+                hint = f" Available editable inputs: {', '.join(fillables[:5])}" if fillables else " No editable text inputs found on page."
+                return f"Cannot fill {ref}: element is a <{entry.role}> ('{entry.name}'), which is not an editable text field.{hint}"
+            return f"Error filling {ref}: {err_msg}"
 
     async def select(self, ref: str, value: str) -> str:
         """Select a dropdown option by value."""

@@ -8,11 +8,15 @@ echo "================================================================="
 echo "       AGENTICA BROWSER: LINUX (DEBIAN 13 / UBUNTU) SETUP        "
 echo "================================================================="
 
-# Check Python 3
-if ! command -v python3 &>/dev/null; then
-    echo "[!] Python 3 not found. Installing..."
-    sudo apt-get update && sudo apt-get install -y python3 python3-pip python3-venv
+# Fix ownership if cloned with sudo
+if [ -n "$SUDO_USER" ]; then
+    chown -R "$SUDO_USER":"$SUDO_USER" .
 fi
+
+# Ensure python3, pip, and venv are installed
+echo "[*] Checking system dependencies..."
+sudo apt-get update -y
+sudo apt-get install -y python3 python3-pip python3-venv git
 
 # Create virtual environment if not present
 if [ ! -d "venv" ]; then

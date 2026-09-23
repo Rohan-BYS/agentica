@@ -19,7 +19,7 @@ class MemoryManager:
     - Emergency garbage collection
     """
 
-    def __init__(self, threshold_percent: float = 85.0):
+    def __init__(self, threshold_percent: float = 90.0):
         self.threshold_percent = threshold_percent
         self.chromium_pids: Set[int] = set()
         self.needs_cleanup = False
@@ -43,12 +43,12 @@ class MemoryManager:
         """
         mem_pct = self.get_usage_percent()
         if mem_pct >= self.threshold_percent:
-            return 0
-        elif mem_pct >= 80.0:
+            return 1
+        elif mem_pct >= 85.0:
             return 5
-        elif mem_pct >= 70.0:
+        elif mem_pct >= 75.0:
             return 20
-        elif mem_pct >= 60.0:
+        elif mem_pct >= 65.0:
             return 50
         else:
             return 100
@@ -84,25 +84,25 @@ class MemoryManager:
     # ------------------------------------------------------------------
 
     def check_emergency_gc(self) -> bool:
-        """Trigger emergency GC if RAM is critically high (>88%)."""
-        if self.get_usage_percent() > 88.0:
+        """Trigger emergency GC if RAM is critically high (>90%)."""
+        if self.get_usage_percent() > 90.0:
             gc.collect()
             self.needs_cleanup = True
             return True
         return False
 
-    async def wait_for_memory(self, check_interval: float = 0.5) -> None:
+    async def wait_for_memory(self, check_interval: float = 0.5, max_wait: float = 3.0) -> None:
         """
-        Block execution until system RAM drops below threshold.
+        Block execution until system RAM drops below threshold or max_wait expires.
         Performs emergency GC while waiting.
         """
-        while True:
+        waited = 0.0
+        while waited < max_wait:
             self.check_emergency_gc()
             if self.is_memory_available():
-                break
-            pct = self.get_usage_percent()
-            print(f"[MemoryManager] RAM at {pct:.1f}% (threshold {self.threshold_percent}%). Waiting...")
+                return
             await asyncio.sleep(check_interval)
+            waited += check_interval
 
     def get_status(self) -> dict:
         """Get comprehensive memory status."""

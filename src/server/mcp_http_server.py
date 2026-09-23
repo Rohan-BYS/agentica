@@ -236,20 +236,37 @@ async def direct_mcp_endpoint(request: Request):
     return JSONResponse(content=resp if resp else {"status": "ok"})
 
 # -------------------------------------------------------------------------
-# Health Check / Status
+# Hermes Direct Messaging Bridge
 # -------------------------------------------------------------------------
+messages_log = []
 
-@app.get("/")
-async def root():
-    mem = await router.get_memory_status()
-    return {
-        "status": "online",
-        "service": "Agentica Remote MCP & Browser Gateway",
-        "mcp_sse_endpoint": "/sse",
-        "mcp_post_endpoint": "/mcp",
-        "memory_status": mem,
-        "available_tools": [t["name"] for t in TOOLS]
+@app.post("/agent_message")
+async def post_agent_message(request: Request):
+    """Hermes can post direct notes, bug reports, or questions to the developer"""
+    import time
+    from pathlib import Path
+    data = await request.json()
+    entry = {
+        "timestamp": time.time(),
+        "sender": data.get("sender", "Hermes"),
+        "message": data.get("message", "")
     }
+    messages_log.append(entry)
+    Path("data").mkdir(parents=True, exist_ok=True)
+    Path("data/hermes_messages.json").write_text(json.dumps(messages_log, indent=2), encoding="utf-8")
+    return {"status": "received", "message_count": len(messages_log)}
+
+@app.get("/agent_message")
+async def get_agent_messages():
+    """Retrieve messages between Hermes and Developer"""
+    from pathlib import Path
+    p = Path("data/hermes_messages.json")
+    if p.exists():
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {"messages": messages_log}
 
 if __name__ == "__main__":
     uvicorn.run("src.server.mcp_http_server:app", host="0.0.0.0", port=8000, reload=False)

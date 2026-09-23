@@ -13,10 +13,32 @@ if [ -n "$SUDO_USER" ]; then
     chown -R "$SUDO_USER":"$SUDO_USER" .
 fi
 
-# Ensure python3, pip, and venv are installed
-echo "[*] Checking system dependencies..."
-sudo apt-get update -y
-sudo apt-get install -y python3 python3-pip python3-venv git
+# Ensure python3, pip, and venv are installed across any Linux distro
+echo "[*] Detecting Linux distribution and installing dependencies..."
+if command -v apt-get &>/dev/null; then
+    # Debian, Ubuntu, Mint, Pop!_OS, Kali, etc.
+    echo "[*] Detected Debian/Ubuntu family (apt)..."
+    sudo apt-get update -y
+    sudo apt-get install -y python3 python3-pip python3-venv git
+elif command -v dnf &>/dev/null; then
+    # Fedora, RHEL, CentOS Stream, Rocky, Alma
+    echo "[*] Detected Fedora/RHEL family (dnf)..."
+    sudo dnf install -y python3 python3-pip git
+elif command -v pacman &>/dev/null; then
+    # Arch Linux, Manjaro, EndeavourOS
+    echo "[*] Detected Arch Linux family (pacman)..."
+    sudo pacman -Sy --noconfirm python python-pip git
+elif command -v zypper &>/dev/null; then
+    # openSUSE, SUSE
+    echo "[*] Detected openSUSE family (zypper)..."
+    sudo zypper install -y python3 python3-pip git
+elif command -v apk &>/dev/null; then
+    # Alpine Linux
+    echo "[*] Detected Alpine Linux (apk)..."
+    sudo apk add --no-cache python3 py3-pip git
+else
+    echo "[!] Unrecognized package manager. Ensure python3, python3-pip, and python3-venv are installed manually."
+fi
 
 # Create virtual environment if not present
 if [ ! -d "venv" ]; then

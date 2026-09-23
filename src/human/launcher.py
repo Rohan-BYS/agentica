@@ -12,18 +12,26 @@ async def launch_human_profile():
     user_data_dir = project_dir / "data" / "profiles" / "human"
     user_data_dir.mkdir(parents=True, exist_ok=True)
     
-    # Ensure Playwright uses local binaries
-    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(project_dir / "bin")
+    # Ensure Playwright uses local binaries if present
+    local_bin = project_dir / "bin"
+    if local_bin.exists() and any(local_bin.glob("chromium*")):
+        os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(local_bin)
     
     async with async_playwright() as p:
-        # Find the local agentica.exe
-        original_exe = Path(p.chromium.executable_path)
-        agentica_exe = original_exe.parent / "agentica.exe"
+        # Find custom branded agentica executable if on Windows, else use standard chromium
+        executable_path = None
+        try:
+            original_exe = Path(p.chromium.executable_path)
+            agentica_exe = original_exe.parent / "agentica.exe"
+            if agentica_exe.exists():
+                executable_path = str(agentica_exe)
+        except Exception:
+            pass
         
         # Launch Chromium with persistent context and remote debugging port 9222
         browser_context = await p.chromium.launch_persistent_context(
             user_data_dir=str(user_data_dir),
-            executable_path=str(agentica_exe) if agentica_exe.exists() else None,
+            executable_path=executable_path,
             headless=False,
             no_viewport=True,  # This tells the engine to let the OS window dictate the viewport
             args=[

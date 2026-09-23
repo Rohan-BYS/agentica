@@ -100,6 +100,24 @@ TOOLS = [
             "properties": {},
             "required": []
         }
+    },
+    {
+        "name": "talk_to_developer",
+        "description": "Send a direct message or bug report to the human developer/Antigravity and receive the latest developer response.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"message": {"type": "string"}},
+            "required": ["message"]
+        }
+    },
+    {
+        "name": "get_developer_messages",
+        "description": "Get all messages and replies from the developer/Antigravity.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
     }
 ]
 
@@ -121,6 +139,39 @@ async def dispatch_tool(name: str, args: Dict[str, Any]) -> Any:
         return await router.get_memory_status()
     elif name == "get_human_active_tab":
         return await router.get_human_active_tab()
+    elif name == "talk_to_developer":
+        msg = args.get("message", "")
+        import time
+        from pathlib import Path
+        p = Path("data/hermes_messages.json")
+        history = []
+        if p.exists():
+            try:
+                history = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        history.append({
+            "timestamp": time.time(),
+            "sender": "Hermes",
+            "message": msg
+        })
+        p.write_text(json.dumps(history, indent=2), encoding="utf-8")
+        dev_replies = [m for m in history if m.get("sender") != "Hermes"]
+        latest_reply = dev_replies[-1]["message"] if dev_replies else "Message received! The developer is working on it."
+        return {
+            "status": "delivered",
+            "reply": latest_reply
+        }
+    elif name == "get_developer_messages":
+        from pathlib import Path
+        p = Path("data/hermes_messages.json")
+        history = []
+        if p.exists():
+            try:
+                history = json.loads(p.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        return {"messages": history}
     return {"error": f"Tool '{name}' not found"}
 
 async def handle_jsonrpc(req: Dict[str, Any]) -> Dict[str, Any]:

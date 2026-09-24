@@ -1,28 +1,41 @@
 import sys
 import json
 import asyncio
+from pathlib import Path
 from typing import Dict, Any, List, Optional
+
+# Ensure project root is in sys.path regardless of where the command was invoked
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
+
+# Ensure UTF-8 I/O for stdio transport
+if hasattr(sys.stdin, "reconfigure"):
+    try:
+        sys.stdin.reconfigure(encoding="utf-8")
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
 
 from src.core.router import AIBrowserRouter
 
 class NexusMCPServer:
     """
     JSON-RPC 2.0 implementation of the Model Context Protocol (MCP) over stdio.
-    Exposes the AIBrowserRouter capabilities to AI agents.
+    Exposes Agentica's AIBrowserRouter capabilities to AI agents (like Hermes).
     """
     def __init__(self):
+        self._log("Initializing Agentica MCP Stdio Server...")
         self.router = AIBrowserRouter()
-        
-    def _read_message(self) -> Optional[Dict[Any, Any]]:
-        line = sys.stdin.readline()
-        if not line:
-            return None
-        try:
-            return json.loads(line)
-        except json.JSONDecodeError:
-            return None
+        self._log("Router ready.")
+
+    def _log(self, text: str):
+        """MCP specification: All server logging must go to stderr."""
+        sys.stderr.write(f"[Agentica MCP] {text}\n")
+        sys.stderr.flush()
 
     def _write_message(self, msg: Dict[Any, Any]):
+        """MCP specification: Stdout is strictly reserved for single-line JSON-RPC messages."""
         sys.stdout.write(json.dumps(msg) + "\n")
         sys.stdout.flush()
 
@@ -35,31 +48,46 @@ class NexusMCPServer:
         params = req.get("params", {})
 
         if method == "initialize":
+            client_proto = params.get("protocolVersion", "2024-11-05")
+            self._log(f"Received 'initialize' (protocolVersion: {client_proto})")
             self._write_message({
                 "jsonrpc": "2.0",
                 "id": msg_id,
                 "result": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
+                    "protocolVersion": client_proto,
+                    "capabilities": {
+                        "tools": {
+                            "listChanged": False
+                        }
+                    },
                     "serverInfo": {
-                        "name": "nexus-mcp",
+                        "name": "agentica",
                         "version": "1.0.0"
                     }
                 }
             })
         elif method == "notifications/initialized":
-            pass # No response needed
+            self._log("Client confirmed initialization (notifications/initialized)")
+        elif method == "ping":
+            self._write_message({
+                "jsonrpc": "2.0",
+                "id": msg_id,
+                "result": {}
+            })
         elif method == "tools/list":
+            tools = self._get_tools()
+            self._log(f"Serving tools/list ({len(tools)} tools registered)")
             self._write_message({
                 "jsonrpc": "2.0",
                 "id": msg_id,
                 "result": {
-                    "tools": self._get_tools()
+                    "tools": tools
                 }
             })
         elif method == "tools/call":
             tool_name = params.get("name")
             tool_args = params.get("arguments", {})
+            self._log(f"Executing tools/call: {tool_name}")
             try:
                 res = await self._call_tool(tool_name, tool_args)
                 self._write_message({
@@ -67,12 +95,13 @@ class NexusMCPServer:
                     "id": msg_id,
                     "result": {
                         "content": [
-                            {"type": "text", "text": json.dumps(res)}
+                            {"type": "text", "text": json.dumps(res) if isinstance(res, (dict, list)) else str(res)}
                         ],
                         "isError": False
                     }
                 })
             except Exception as e:
+                self._log(f"Error in tools/call {tool_name}: {e}")
                 self._write_message({
                     "jsonrpc": "2.0",
                     "id": msg_id,
@@ -205,8 +234,8 @@ class NexusMCPServer:
         elif name == "talk_to_developer":
             msg = args.get("message", "")
             import time
-            from pathlib import Path
-            p = Path("data/hermes_messages.json")
+            p = PROJECT_DIR / "data" / "hermes_messages.json"
+            p.parent.mkdir(parents=True, exist_ok=True)
             history = []
             if p.exists():
                 try:
@@ -226,8 +255,7 @@ class NexusMCPServer:
                 "reply": latest_reply
             }
         elif name == "get_developer_messages":
-            from pathlib import Path
-            p = Path("data/hermes_messages.json")
+            p = PROJECT_DIR / "data" / "hermes_messages.json"
             history = []
             if p.exists():
                 try:
@@ -240,16 +268,20 @@ class NexusMCPServer:
 
     async def run(self):
         loop = asyncio.get_running_loop()
+        self._log("Stdio listener loop active. Waiting for JSON-RPC messages from client...")
         while True:
-            # Read from stdin asynchronously using executor
             line = await loop.run_in_executor(None, sys.stdin.readline)
             if not line:
+                self._log("Stdin closed (EOF). Shutting down.")
                 break
+            stripped = line.strip()
+            if not stripped:
+                continue
             try:
-                req = json.loads(line)
+                req = json.loads(stripped)
                 await self._handle_request(req)
-            except json.JSONDecodeError:
-                pass
+            except json.JSONDecodeError as err:
+                self._log(f"Invalid JSON received on stdin: {err}")
 
 def main():
     server = NexusMCPServer()

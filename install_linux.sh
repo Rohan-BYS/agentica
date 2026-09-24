@@ -86,6 +86,24 @@ if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
 fi
 chmod -R u+rwX "$SCRIPT_DIR/venv" "$SCRIPT_DIR/data" 2>/dev/null || true
 
+# Fix Hermes venv ownership if root-owned (Issue 5 from agent report)
+HERMES_VENV="/usr/local/lib/hermes-agent/venv"
+if [ -d "$HERMES_VENV" ] && [ "$(stat -c '%U' "$HERMES_VENV" 2>/dev/null)" = "root" ]; then
+    echo "[*] Fixing Hermes venv ownership at $HERMES_VENV..."
+    if [ "$(id -u)" -eq 0 ]; then
+        chown -R "$TARGET_USER":"$TARGET_USER" "$HERMES_VENV"
+    else
+        sudo chown -R "$TARGET_USER":"$TARGET_USER" "$HERMES_VENV" 2>/dev/null || \
+            echo "[!] Cannot fix Hermes venv. Run: sudo chown -R $TARGET_USER:$TARGET_USER $HERMES_VENV"
+    fi
+fi
+
+# Upgrade mcp package in Hermes venv if present (Issue 6)
+if [ -x "$HERMES_VENV/bin/pip" ]; then
+    echo "[*] Upgrading 'mcp' package in Hermes venv..."
+    "$HERMES_VENV/bin/pip" install --upgrade "mcp>=1.0.0" 2>/dev/null || true
+fi
+
 # Setup Desktop shortcut if GUI desktop exists
 if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ] || [ -d "$HOME/Desktop" ]; then
     echo "[*] Creating Desktop shortcut and Application Menu entry with Agentica logo..."
@@ -94,11 +112,13 @@ fi
 
 # Automatically setup persistent systemd service if systemctl is available
 if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
-    echo "[*] Automatically configuring persistent systemd service for Hermes..."
+    echo "[*] Automatically configuring persistent systemd service..."
     if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
         su - "$TARGET_USER" -c "cd '$SCRIPT_DIR' && ./setup_systemd_service.sh" || true
+        su - "$TARGET_USER" -c "cd '$SCRIPT_DIR' && ./setup_health_timer.sh" 2>/dev/null || true
     else
         ./setup_systemd_service.sh || true
+        ./setup_health_timer.sh 2>/dev/null || true
     fi
 fi
 

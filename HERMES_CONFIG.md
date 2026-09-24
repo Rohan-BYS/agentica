@@ -1,12 +1,10 @@
 # Hermes Agent Integration & Multi-System Deployment Guide
 
-This guide details how to automatically deploy and connect **Agentica AI Browser** with **Hermes AI Agent** across 10+ Linux systems (Debian, Ubuntu, Fedora, Arch, CentOS, etc.).
+> **Version**: 2.0 — Addresses all issues from the Hermes Weakness Report
 
 ---
 
 ## ⚡ Quick Start: 1-Command Automated Bootstrap
-
-To deploy Agentica, configure Hermes, start the background service, and verify tool registration across any Linux machine:
 
 ```bash
 cd ~/agentica
@@ -14,48 +12,51 @@ chmod +x deploy_hermes.sh
 ./deploy_hermes.sh
 ```
 
-### What this single command does automatically:
-1. **Installs Agentica** and OS library dependencies with root/user permissions handled cleanly.
-2. **Sets up systemd user service** (`agentica.service`) on `http://127.0.0.1:8000/mcp` (starts on boot, auto-restarts on crash, 0ms network latency).
-3. **Updates Hermes `config.yaml`** (locates `~/.hermes/config.yaml` or custom path and inserts/updates the `agentica` MCP block).
-4. **Restarts the Hermes Gateway** cleanly.
-5. **Verifies tool registration** (ensures all 10 tools are active and responding).
+This single command:
+1. Installs Agentica + system dependencies (fixes file permissions automatically)
+2. Sets up systemd user service on `http://127.0.0.1:8000/mcp` (persistent, starts on boot)
+3. Fixes Hermes venv ownership (`/usr/local/lib/hermes-agent/venv/`) and upgrades `mcp` package
+4. Updates Hermes `config.yaml` (auto-detects location, creates backup)
+5. Safely restarts Hermes gateway (detects inside-gateway execution and avoids self-kill)
+6. Installs health check timer (auto-restarts Agentica if it goes down)
+7. Verifies all 10 tools are registered
+
+### Command Options
+```bash
+./deploy_hermes.sh                              # Default: local HTTP
+./deploy_hermes.sh --transport stdio             # Use stdio subprocess
+./deploy_hermes.sh --config /path/config.yaml    # Custom config path
+./deploy_hermes.sh --skip-restart                # Don't restart gateway
+./deploy_hermes.sh --test-only                   # Only run verification
+```
 
 ---
 
-## Manual Configuration Options
+## Transport Options
 
-If you prefer manual configuration, Hermes can connect via **Local HTTP** (recommended) or **Local Stdio**.
+### ✅ Option 1: Local HTTP via Systemd (RECOMMENDED for Production)
 
-### Option 1: Local HTTP (Recommended for Multi-System Rollouts)
+Zero network latency, auto-starts on boot, auto-restarts on crash, works across all Linux distros.
 
-No external network dependencies, no tunnel latency, and persistent across terminal exits.
-
-#### 1. Enable Systemd Service
-```bash
-./setup_systemd_service.sh
-```
-
-#### 2. Configure `~/.hermes/config.yaml`
 ```yaml
+# ~/.hermes/config.yaml
 mcp_servers:
   agentica:
     url: "http://127.0.0.1:8000/mcp"
     connect_timeout: 60
 ```
 
-#### 3. Management Commands
-- Service Status: `systemctl --user status agentica`
-- Live Logs: `journalctl --user -u agentica -f`
-- Restart Server: `systemctl --user restart agentica`
-- Reload Hermes MCP: `./hermes_reload_mcp.sh`
-
----
+Management:
+```bash
+systemctl --user status agentica          # Check status
+journalctl --user -u agentica -f          # Live logs
+systemctl --user restart agentica         # Restart
+```
 
 ### Option 2: Local Stdio (Direct Subprocess)
 
-#### Configure `~/.hermes/config.yaml`
 ```yaml
+# ~/.hermes/config.yaml
 mcp_servers:
   agentica:
     command: "/home/YOUR_USER/agentica/venv/bin/python3"
@@ -66,41 +67,117 @@ mcp_servers:
       PYTHONUNBUFFERED: "1"
 ```
 
-*(Or use `/home/YOUR_USER/agentica/run_mcp_stdio.sh`)*
+### ⚠️ Option 3: Remote Cloudflare Tunnel (DEV/TESTING ONLY)
+
+> **WARNING**: Cloudflare quick tunnels are unreliable for production use.
+> They return 530 errors without warning and have no uptime guarantee.
+> Use **only** for temporary testing when direct network access is unavailable.
+
+```yaml
+# ~/.hermes/config.yaml — DEV ONLY
+mcp_servers:
+  agentica:
+    url: "https://<TUNNEL_URL>/mcp"
+    connect_timeout: 120
+```
 
 ---
 
-## Available Agentica Tools (All 10 Registered)
+## Available Tools (All 10)
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `browse` | `url` (str), `mode` (str) | Autonomous navigation with 3-tier escalation (Text/DOM/Vision) |
-| `browse_batch` | `urls` (list) | Concurrent safe scraping with RAM bounds |
-| `snapshot` | *None* | Live accessibility tree with clickable `@eN` references |
-| `click` | `ref` (str) | Click element handle (e.g. `@e1`) |
-| `fill` | `ref` (str), `text` (str) | Type text into forms / input fields |
-| `screenshot` | `url` (str) | Capture visual screenshot with base64 data |
-| `get_human_active_tab` | *None* | Co-browse on desktop port 9222 with human user |
-| `get_memory_status` | *None* | Real-time RAM thresholds and safe worker counts |
-| `talk_to_developer` | `message` (str) | Direct developer message bus |
-| `get_developer_messages` | *None* | Read developer replies and notifications |
+| `browse` | `url`, `mode` | 3-tier autonomous navigation (Text → DOM → Vision) |
+| `browse_batch` | `urls` | Concurrent safe scraping with RAM bounds |
+| `snapshot` | — | Live accessibility tree with `@eN` references |
+| `click` | `ref` | Click element (e.g. `@e1`) |
+| `fill` | `ref`, `text` | Type into form inputs |
+| `screenshot` | `url` | Visual screenshot with base64 |
+| `get_human_active_tab` | — | Co-browse desktop port 9222 |
+| `get_memory_status` | — | RAM thresholds and worker counts |
+| `talk_to_developer` | `message` | Developer message bus |
+| `get_developer_messages` | — | Read developer replies |
 
 ---
 
-## Troubleshooting & Key Fixes
+## Troubleshooting Guide
 
-### 1. Stdio Tool Discovery Issue (Resolved)
-- **Symptom**: Gateway showed `MCP servers reconciled: added=[agentica]`, but zero tools appeared.
-- **Cause**: The `initialize` JSON-RPC handshake returned `"capabilities": {}`. Under the MCP 2024-11-05 spec, if `"capabilities.tools"` is missing, the client assumes the server has no tools and skips `tools/list`.
-- **Fix**: Declared `"capabilities": {"tools": {"listChanged": false}}` and added logging to `sys.stderr` so logs show in Hermes gateway.
+### Issue: Tools don't appear after deployment
 
-### 2. HTTP Server Stopped After Terminal Exit (Resolved)
-- **Cause**: Running uvicorn in a terminal session terminates with SIGHUP when the shell closes.
-- **Fix**: Run `./setup_systemd_service.sh` to run Agentica as a user systemd daemon (`systemctl --user enable --now agentica`).
+**Cause**: Hermes gateway hasn't reloaded MCP config.
 
-### 3. Venv Permissions on Fresh Installs (Resolved)
-- **Cause**: Cloning or running installer with `sudo` made `venv/` owned by `root`.
-- **Fix**: Installer automatically detects `$SUDO_USER` and sets ownership to the regular user with `chown -R "$TARGET_USER"`.
+**Fix** (in priority order):
+1. Type `/reload-mcp` in Telegram chat
+2. Run `hermes gateway restart` in a terminal
+3. Run `systemctl --user restart hermes` in a terminal
+4. Run `./hermes_reload_mcp.sh`
 
-### 4. Triggering MCP Discovery Without Full Gateway Restart
-- Run `./hermes_reload_mcp.sh` to trigger discovery on the running gateway.
+### Issue: "Permission denied" when installing packages in Hermes venv
+
+**Cause**: `/usr/local/lib/hermes-agent/venv/` is owned by root.
+
+**Fix**:
+```bash
+sudo chown -R $USER:$USER /usr/local/lib/hermes-agent/venv/
+```
+*(deploy_hermes.sh does this automatically)*
+
+### Issue: `mcp` package version error (no `streamable_http_client`)
+
+**Cause**: Old `mcp` package version.
+
+**Fix**:
+```bash
+/usr/local/lib/hermes-agent/venv/bin/pip install --upgrade "mcp>=1.0.0"
+```
+*(deploy_hermes.sh does this automatically)*
+
+### Issue: deploy_hermes.sh fails at "Restart Gateway" step
+
+**Cause**: Script is running inside the Hermes gateway process. Restarting kills the script.
+
+**Fix**: The latest deploy_hermes.sh detects this and prints manual instructions instead of crashing.
+You can also use `--skip-restart`:
+```bash
+./deploy_hermes.sh --skip-restart
+# Then manually:
+hermes gateway restart
+```
+
+### Issue: Server goes down and tools disappear
+
+**Fix**: Install the health check timer:
+```bash
+./setup_health_timer.sh
+```
+This checks every 5 minutes and auto-restarts Agentica if it's down.
+
+### Issue: Stdio subprocess spawn — gateway shows "added=[agentica]" but no tools
+
+**Cause (now fixed)**: The `initialize` handshake was missing `"capabilities": {"tools": {}}`. Without this, Hermes skips `tools/list`.
+
+**Verification**: Run `./deploy_hermes.sh --test-only` to confirm the handshake includes `capabilities.tools`.
+
+### Issue: Can't edit config.yaml from inside the agent
+
+**Cause**: Hermes security policy prevents agent writes to config files.
+
+**Fix**: Use `./deploy_hermes.sh` which handles config writes externally, or manually edit `~/.hermes/config.yaml`.
+
+---
+
+## Quick Verification Commands
+
+```bash
+# Test Agentica server directly
+curl http://127.0.0.1:8000/status
+
+# Full stdio + HTTP test suite
+./deploy_hermes.sh --test-only
+
+# Hermes-side test
+hermes mcp test agentica
+
+# Health log
+tail -20 ~/agentica/data/health.log
+```

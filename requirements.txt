@@ -9,5 +9,5 @@ chardet
 feedparser
 lxml
 fastapi
-uvicorn
-
+uvicorn[standard]
+mcp>=1.0.0

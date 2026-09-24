@@ -1,26 +1,42 @@
-# Hermes Agent Configuration Guide for Agentica
+# Hermes Agent Integration & Multi-System Deployment Guide
 
-This guide details how to configure the **Hermes AI Agent** to connect with Agentica across Linux distributions and multi-system deployments.
-
----
-
-## Transport Options
-
-Hermes can connect to Agentica using **Local HTTP** (recommended), **Local Stdio**, or **Remote Cloudflare Tunnel**.
+This guide details how to automatically deploy and connect **Agentica AI Browser** with **Hermes AI Agent** across 10+ Linux systems (Debian, Ubuntu, Fedora, Arch, CentOS, etc.).
 
 ---
 
-### Option 1: Local HTTP via Systemd (Recommended for 10+ Linux Systems)
+## ⚡ Quick Start: 1-Command Automated Bootstrap
 
-This is the fastest, lowest-latency setup (0ms external network overhead) and starts automatically on boot across any Linux distro.
+To deploy Agentica, configure Hermes, start the background service, and verify tool registration across any Linux machine:
 
-#### Step 1: Install the systemd user service
 ```bash
 cd ~/agentica
+chmod +x deploy_hermes.sh
+./deploy_hermes.sh
+```
+
+### What this single command does automatically:
+1. **Installs Agentica** and OS library dependencies with root/user permissions handled cleanly.
+2. **Sets up systemd user service** (`agentica.service`) on `http://127.0.0.1:8000/mcp` (starts on boot, auto-restarts on crash, 0ms network latency).
+3. **Updates Hermes `config.yaml`** (locates `~/.hermes/config.yaml` or custom path and inserts/updates the `agentica` MCP block).
+4. **Restarts the Hermes Gateway** cleanly.
+5. **Verifies tool registration** (ensures all 10 tools are active and responding).
+
+---
+
+## Manual Configuration Options
+
+If you prefer manual configuration, Hermes can connect via **Local HTTP** (recommended) or **Local Stdio**.
+
+### Option 1: Local HTTP (Recommended for Multi-System Rollouts)
+
+No external network dependencies, no tunnel latency, and persistent across terminal exits.
+
+#### 1. Enable Systemd Service
+```bash
 ./setup_systemd_service.sh
 ```
 
-#### Step 2: Configure Hermes `config.yaml`
+#### 2. Configure `~/.hermes/config.yaml`
 ```yaml
 mcp_servers:
   agentica:
@@ -28,22 +44,17 @@ mcp_servers:
     connect_timeout: 60
 ```
 
-#### Useful commands:
-- Check status: `systemctl --user status agentica`
-- View live logs: `journalctl --user -u agentica -f`
-- Restart service: `systemctl --user restart agentica`
+#### 3. Management Commands
+- Service Status: `systemctl --user status agentica`
+- Live Logs: `journalctl --user -u agentica -f`
+- Restart Server: `systemctl --user restart agentica`
+- Reload Hermes MCP: `./hermes_reload_mcp.sh`
 
 ---
 
-### Option 2: Local Stdio Transport (Direct Subprocess)
+### Option 2: Local Stdio (Direct Subprocess)
 
-Use this if Hermes spawns local subprocesses directly.
-
-> **Note on Stdio Fix**: In previous builds, the `initialize` handshake omitted the `"capabilities": {"tools": {}}` declaration, which caused the Hermes gateway to silently skip tool discovery (`added=[agentica]` without registering tools). This has been resolved, and debug logs are now streamed directly to `stderr` for visibility.
-
-#### Hermes `config.yaml`:
-
-**Direct Python Binary (Most reliable across any shell/working directory):**
+#### Configure `~/.hermes/config.yaml`
 ```yaml
 mcp_servers:
   agentica:
@@ -55,57 +66,41 @@ mcp_servers:
       PYTHONUNBUFFERED: "1"
 ```
 
-*Or via the runner script:*
-```yaml
-mcp_servers:
-  agentica:
-    command: "/home/YOUR_USER/agentica/run_mcp_stdio.sh"
-```
-
-*(Replace `/home/YOUR_USER/agentica` with your actual absolute path).*
+*(Or use `/home/YOUR_USER/agentica/run_mcp_stdio.sh`)*
 
 ---
 
-### Option 3: Remote Transport (Cloudflare Tunnel)
-
-Use this when Hermes runs on a remote server/VM and needs to talk to Agentica running on another machine.
-
-#### Hermes `config.yaml`:
-```yaml
-mcp_servers:
-  agentica:
-    url: "https://<YOUR_TUNNEL_URL>/mcp"
-    connect_timeout: 120
-```
-
----
-
-## Available Agentica Tools (10 Total)
+## Available Agentica Tools (All 10 Registered)
 
 | Tool | Parameters | Description |
 |---|---|---|
-| `browse` | `url` (str), `mode` (str: auto/text/struct/visual) | Autonomous navigation with 3-tier escalation |
-| `browse_batch` | `urls` (list of str) | Concurrently fetch multiple pages safely |
-| `snapshot` | *None* | Get current page AXTree with `@eN` references |
-| `click` | `ref` (str: "@e1") | Click interactive element by handle |
-| `fill` | `ref` (str), `text` (str) | Type text into input fields by handle |
+| `browse` | `url` (str), `mode` (str) | Autonomous navigation with 3-tier escalation (Text/DOM/Vision) |
+| `browse_batch` | `urls` (list) | Concurrent safe scraping with RAM bounds |
+| `snapshot` | *None* | Live accessibility tree with clickable `@eN` references |
+| `click` | `ref` (str) | Click element handle (e.g. `@e1`) |
+| `fill` | `ref` (str), `text` (str) | Type text into forms / input fields |
 | `screenshot` | `url` (str) | Capture visual screenshot with base64 data |
-| `get_memory_status` | *None* | Inspect RAM safety thresholds |
-| `get_human_active_tab` | *None* | Co-browse with human on desktop port 9222 |
-| `talk_to_developer` | `message` (str) | Send direct bug report/feedback to Antigravity |
-| `get_developer_messages` | *None* | Read dev messages and replies |
+| `get_human_active_tab` | *None* | Co-browse on desktop port 9222 with human user |
+| `get_memory_status` | *None* | Real-time RAM thresholds and safe worker counts |
+| `talk_to_developer` | `message` (str) | Direct developer message bus |
+| `get_developer_messages` | *None* | Read developer replies and notifications |
 
 ---
 
-## Verifying the Connection Manually
+## Troubleshooting & Key Fixes
 
-To verify stdio handshake on any Linux terminal:
-```bash
-cd ~/agentica
-source venv/bin/activate
-echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05"}}' | python3 -u src/server/mcp_server.py
-```
-Expected output:
-```json
-{"jsonrpc": "2.0", "id": 1, "result": {"protocolVersion": "2024-11-05", "capabilities": {"tools": {"listChanged": false}}, "serverInfo": {"name": "agentica", "version": "1.0.0"}}}
-```
+### 1. Stdio Tool Discovery Issue (Resolved)
+- **Symptom**: Gateway showed `MCP servers reconciled: added=[agentica]`, but zero tools appeared.
+- **Cause**: The `initialize` JSON-RPC handshake returned `"capabilities": {}`. Under the MCP 2024-11-05 spec, if `"capabilities.tools"` is missing, the client assumes the server has no tools and skips `tools/list`.
+- **Fix**: Declared `"capabilities": {"tools": {"listChanged": false}}` and added logging to `sys.stderr` so logs show in Hermes gateway.
+
+### 2. HTTP Server Stopped After Terminal Exit (Resolved)
+- **Cause**: Running uvicorn in a terminal session terminates with SIGHUP when the shell closes.
+- **Fix**: Run `./setup_systemd_service.sh` to run Agentica as a user systemd daemon (`systemctl --user enable --now agentica`).
+
+### 3. Venv Permissions on Fresh Installs (Resolved)
+- **Cause**: Cloning or running installer with `sudo` made `venv/` owned by `root`.
+- **Fix**: Installer automatically detects `$SUDO_USER` and sets ownership to the regular user with `chown -R "$TARGET_USER"`.
+
+### 4. Triggering MCP Discovery Without Full Gateway Restart
+- Run `./hermes_reload_mcp.sh` to trigger discovery on the running gateway.

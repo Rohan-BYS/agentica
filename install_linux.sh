@@ -12,10 +12,8 @@ echo "================================================================="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR"
 
-# Fix ownership if cloned with sudo
-if [ -n "$SUDO_USER" ]; then
-    chown -R "$SUDO_USER":"$SUDO_USER" "$SCRIPT_DIR" 2>/dev/null || true
-fi
+# Target user detection
+TARGET_USER="${SUDO_USER:-$USER}"
 
 # Detect sudo requirement
 SUDO=""
@@ -78,13 +76,30 @@ playwright install --with-deps chromium
 # Create data directories
 mkdir -p data/hibernate data/screenshots data/sessions data/profiles/human
 
-# Make helper scripts executable
-chmod +x run_mcp_stdio.sh run_mcp_http.sh launch_human.sh create_desktop_shortcut.sh setup_systemd_service.sh 2>/dev/null || true
+# Make all shell scripts executable
+chmod +x *.sh 2>/dev/null || true
 
-# Create desktop shortcut with logo for Human mode if desktop environment is present
+# Fix permissions so regular user owns everything
+if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+    echo "[*] Setting file permissions for '$TARGET_USER'..."
+    chown -R "$TARGET_USER":"$TARGET_USER" "$SCRIPT_DIR"
+fi
+chmod -R u+rwX "$SCRIPT_DIR/venv" "$SCRIPT_DIR/data" 2>/dev/null || true
+
+# Setup Desktop shortcut if GUI desktop exists
 if [ -n "$DISPLAY" ] || [ -n "$WAYLAND_DISPLAY" ] || [ -d "$HOME/Desktop" ]; then
     echo "[*] Creating Desktop shortcut and Application Menu entry with Agentica logo..."
     ./create_desktop_shortcut.sh 2>/dev/null || true
+fi
+
+# Automatically setup persistent systemd service if systemctl is available
+if command -v systemctl &>/dev/null && [ -d /run/systemd/system ]; then
+    echo "[*] Automatically configuring persistent systemd service for Hermes..."
+    if [ "$(id -u)" -eq 0 ] && [ -n "$SUDO_USER" ]; then
+        su - "$TARGET_USER" -c "cd '$SCRIPT_DIR' && ./setup_systemd_service.sh" || true
+    else
+        ./setup_systemd_service.sh || true
+    fi
 fi
 
 echo ""
@@ -96,14 +111,10 @@ echo "👤 For Humans (Regular Desktop Browser with Co-Browsing on port 9222):"
 echo "   - Click 'Agentica' in your Applications menu / Desktop"
 echo "   - Or run: ./launch_human.sh"
 echo ""
-echo "🤖 For Local AI Agents (Hermes via MCP stdio):"
-echo "   - Command: $PWD/run_mcp_stdio.sh"
-echo "   - Or direct python: $PWD/venv/bin/python3 -u $PWD/src/server/mcp_server.py"
+echo "🤖 For Hermes AI Agent (Automatic Full Deployment):"
+echo "   - Run: ./deploy_hermes.sh"
 echo ""
-echo "⚙️ For Local AI Agents (Hermes via Systemd Background Service):"
-echo "   - Run: ./setup_systemd_service.sh"
-echo "   - Connects to: http://127.0.0.1:8000/mcp (zero latency, starts on boot)"
-echo ""
-echo "🌐 For Remote / Ad-hoc MCP (HTTP / SSE server):"
-echo "   - Run: ./run_mcp_http.sh"
+echo "⚙️ Background Service (Persistent on boot, zero latency):"
+echo "   - Status: systemctl --user status agentica"
+echo "   - Local URL: http://127.0.0.1:8000/mcp"
 echo "================================================================="

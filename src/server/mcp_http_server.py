@@ -1,11 +1,18 @@
 import asyncio
 import json
 import uuid
-from typing import Dict, Any, Optional
+import sys
+import time
+from pathlib import Path
+from typing import Dict, Any, Optional, List, Union
 from fastapi import FastAPI, Request, Response
 from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
+
+PROJECT_DIR = Path(__file__).resolve().parent.parent.parent
+if str(PROJECT_DIR) not in sys.path:
+    sys.path.insert(0, str(PROJECT_DIR))
 
 from src.core.router import AIBrowserRouter
 
@@ -21,6 +28,20 @@ app.add_middleware(
 
 router = AIBrowserRouter()
 sessions: Dict[str, asyncio.Queue] = {}
+
+LOG_FILE = PROJECT_DIR / "data" / "mcp_server.log"
+LOG_FILE.parent.mkdir(parents=True, exist_ok=True)
+
+def log_event(text: str):
+    """Log to console and file so discovery failures are never silent."""
+    msg = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] [Agentica MCP-HTTP] {text}\n"
+    sys.stderr.write(msg)
+    sys.stderr.flush()
+    try:
+        with open(LOG_FILE, "a", encoding="utf-8") as f:
+            f.write(msg)
+    except Exception:
+        pass
 
 TOOLS = [
     {
@@ -122,6 +143,7 @@ TOOLS = [
 ]
 
 async def dispatch_tool(name: str, args: Dict[str, Any]) -> Any:
+    log_event(f"Dispatching tool '{name}' with args {list(args.keys())}")
     if name == "browse":
         mode = args.get("mode", "auto")
         return await router.browse(args["url"], mode=mode)
@@ -141,9 +163,8 @@ async def dispatch_tool(name: str, args: Dict[str, Any]) -> Any:
         return await router.get_human_active_tab()
     elif name == "talk_to_developer":
         msg = args.get("message", "")
-        import time
-        from pathlib import Path
-        p = Path("data/hermes_messages.json")
+        p = PROJECT_DIR / "data" / "hermes_messages.json"
+        p.parent.mkdir(parents=True, exist_ok=True)
         history = []
         if p.exists():
             try:
@@ -163,8 +184,7 @@ async def dispatch_tool(name: str, args: Dict[str, Any]) -> Any:
             "reply": latest_reply
         }
     elif name == "get_developer_messages":
-        from pathlib import Path
-        p = Path("data/hermes_messages.json")
+        p = PROJECT_DIR / "data" / "hermes_messages.json"
         history = []
         if p.exists():
             try:
@@ -174,24 +194,43 @@ async def dispatch_tool(name: str, args: Dict[str, Any]) -> Any:
         return {"messages": history}
     return {"error": f"Tool '{name}' not found"}
 
-async def handle_jsonrpc(req: Dict[str, Any]) -> Dict[str, Any]:
+async def handle_single_jsonrpc(req: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     method = req.get("method")
     msg_id = req.get("id")
     params = req.get("params", {})
 
+    log_event(f"Handling method: '{method}' (id={msg_id})")
+
     if method == "initialize":
+        client_proto = params.get("protocolVersion", "2024-11-05")
+        log_event(f"Client initialize accepted (protocolVersion={client_proto})")
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
             "result": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {"tools": {}},
-                "serverInfo": {"name": "agentica-mcp-remote", "version": "1.0.0"}
+                "protocolVersion": client_proto,
+                "capabilities": {
+                    "tools": {
+                        "listChanged": False
+                    }
+                },
+                "serverInfo": {
+                    "name": "agentica",
+                    "version": "1.0.0"
+                }
             }
         }
     elif method == "notifications/initialized":
+        log_event("Client confirmed notifications/initialized")
         return None
+    elif method == "ping":
+        return {
+            "jsonrpc": "2.0",
+            "id": msg_id,
+            "result": {}
+        }
     elif method == "tools/list":
+        log_event(f"Returning {len(TOOLS)} tools to client")
         return {
             "jsonrpc": "2.0",
             "id": msg_id,
@@ -206,11 +245,14 @@ async def handle_jsonrpc(req: Dict[str, Any]) -> Dict[str, Any]:
                 "jsonrpc": "2.0",
                 "id": msg_id,
                 "result": {
-                    "content": [{"type": "text", "text": json.dumps(res)}],
+                    "content": [
+                        {"type": "text", "text": json.dumps(res) if isinstance(res, (dict, list)) else str(res)}
+                    ],
                     "isError": False
                 }
             }
         except Exception as e:
+            log_event(f"Error executing tool '{tool_name}': {e}")
             return {
                 "jsonrpc": "2.0",
                 "id": msg_id,
@@ -225,6 +267,17 @@ async def handle_jsonrpc(req: Dict[str, Any]) -> Dict[str, Any]:
         "error": {"code": -32601, "message": f"Method '{method}' not found"}
     }
 
+async def handle_jsonrpc(req: Union[Dict[str, Any], List[Dict[str, Any]]]) -> Union[Optional[Dict[str, Any]], List[Dict[str, Any]]]:
+    """Handle both single JSON-RPC requests and batch request arrays."""
+    if isinstance(req, list):
+        results = []
+        for item in req:
+            res = await handle_single_jsonrpc(item)
+            if res is not None:
+                results.append(res)
+        return results
+    return await handle_single_jsonrpc(req)
+
 # -------------------------------------------------------------------------
 # Standard MCP SSE Transport Endpoints
 # -------------------------------------------------------------------------
@@ -235,13 +288,15 @@ async def sse_endpoint(request: Request):
     session_id = str(uuid.uuid4())
     queue: asyncio.Queue = asyncio.Queue()
     sessions[session_id] = queue
+    log_event(f"New SSE connection opened (session_id={session_id})")
 
     async def event_generator():
-        # First event informs the client of the endpoint to send POST messages to
+        # First event informs client of the endpoint to send POST messages to
         yield f"event: endpoint\ndata: /messages?session_id={session_id}\n\n"
         try:
             while True:
                 if await request.is_disconnected():
+                    log_event(f"SSE client disconnected (session_id={session_id})")
                     break
                 try:
                     msg = await asyncio.wait_for(queue.get(), timeout=15.0)
@@ -268,12 +323,11 @@ async def messages_endpoint(request: Request, session_id: Optional[str] = None):
     body = await request.json()
     resp = await handle_jsonrpc(body)
     
-    if resp:
-        # If this request is tied to an active SSE session, send it down the stream
+    if resp is not None:
         if session_id and session_id in sessions:
             await sessions[session_id].put(resp)
         return JSONResponse(content=resp)
-    return Response(status_code=202)
+    return Response(status_code=204)
 
 # -------------------------------------------------------------------------
 # Direct JSON-RPC Endpoint (Standard HTTP POST)
@@ -281,43 +335,29 @@ async def messages_endpoint(request: Request, session_id: Optional[str] = None):
 
 @app.post("/mcp")
 async def direct_mcp_endpoint(request: Request):
-    """Direct HTTP POST JSON-RPC 2.0 endpoint"""
+    """Direct HTTP POST JSON-RPC 2.0 endpoint (used by Hermes local HTTP)"""
     body = await request.json()
     resp = await handle_jsonrpc(body)
-    return JSONResponse(content=resp if resp else {"status": "ok"})
+    if resp is not None:
+        return JSONResponse(content=resp)
+    return Response(status_code=204)
 
 # -------------------------------------------------------------------------
-# Hermes Direct Messaging Bridge
+# Status & Health Check Endpoint
 # -------------------------------------------------------------------------
-messages_log = []
 
-@app.post("/agent_message")
-async def post_agent_message(request: Request):
-    """Hermes can post direct notes, bug reports, or questions to the developer"""
-    import time
-    from pathlib import Path
-    data = await request.json()
-    entry = {
-        "timestamp": time.time(),
-        "sender": data.get("sender", "Hermes"),
-        "message": data.get("message", "")
+@app.get("/health")
+@app.get("/status")
+async def status_endpoint():
+    """Health check endpoint for bootstrap verification"""
+    return {
+        "status": "healthy",
+        "server": "agentica",
+        "version": "1.0.0",
+        "tool_count": len(TOOLS),
+        "tools": [t["name"] for t in TOOLS]
     }
-    messages_log.append(entry)
-    Path("data").mkdir(parents=True, exist_ok=True)
-    Path("data/hermes_messages.json").write_text(json.dumps(messages_log, indent=2), encoding="utf-8")
-    return {"status": "received", "message_count": len(messages_log)}
-
-@app.get("/agent_message")
-async def get_agent_messages():
-    """Retrieve messages between Hermes and Developer"""
-    from pathlib import Path
-    p = Path("data/hermes_messages.json")
-    if p.exists():
-        try:
-            return json.loads(p.read_text(encoding="utf-8"))
-        except Exception:
-            pass
-    return {"messages": messages_log}
 
 if __name__ == "__main__":
+    log_event("Starting Agentica MCP HTTP Server on 0.0.0.0:8000...")
     uvicorn.run("src.server.mcp_http_server:app", host="0.0.0.0", port=8000, reload=False)
